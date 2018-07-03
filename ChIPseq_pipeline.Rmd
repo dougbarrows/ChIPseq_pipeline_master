@@ -1,0 +1,140 @@
+---
+title: "Untitled"
+author: "Doug Barrows"
+date: "April 28, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 
+```{r}
+library(ShortRead)
+
+fastQ <- readFastq("~/Desktop/Bioconductor_Introduction-master_425/r_course/Data/sampled_ENCFF000CXH.fastq.gz")
+
+myQA <- qa("~/Desktop/Bioconductor_Introduction-master_425/r_course/Data/sampled_ENCFF000CXH.fastq.gz")
+myReport <- report(myQA)
+browseURL(myReport)
+
+```
+
+```{r}
+library(Rsubread)
+library(Rsamtools)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(rtracklayer)
+library(GenomicAlignments)
+
+########
+# inputs
+#########
+
+fastq <- "sampledActin.fq.gz"
+mapq <- 15
+
+###########
+
+# exreact the base part of the name of each fast1 file so that this can be ussed as the base for output files generated below
+if (grepl(".fq", fastq)) {
+  base <- strsplit(fastq, ".fq", fixed = TRUE)[[1]][1]
+} else if (grepl(".fastq", fastq)){
+  base <- strsplit(fastq, ".fastq", fixed = TRUE)[[1]][1]
+}
+
+chr7hg38 <- BSgenome.Hsapiens.UCSC.hg38[["chr7"]]
+chr7hg38Set <- DNAStringSet(list(chr7=chr7hg38))
+writeXStringSet(chr7hg38Set,file="chr7.fa")
+
+buildindex("chr7","chr7.fa")
+
+bam <- paste0(base, ".BAM")
+align("chr7", fastq, output_format = "BAM", output_file = bam)
+
+sorted_bam_pre <- paste0(base, "_sorted")
+sortBam(bam, sorted_bam_pre) # don't put ".BAM" at end of output file as it adds it anyway
+
+sorted_bam_post <- paste0(base, "_sorted.BAM")
+indexBam(sorted_bam_post)
+
+print("BamFlagSummary without filtering:")
+print(quickBamFlagSummary(sorted_bam_post))
+
+# filter out low quality reads
+param <- ScanBamParam( mapqFilter = mapq)
+sorted_bam_mpost_mapq <- paste0(sorted_bam_pre, "_q", as.character(mapq), ".BAM")
+filterBam(file = sorted_bam_post, destination = sorted_bam_mpost_mapq, param = param)
+
+print("BamFlagSummary post filtering:")
+print(quickBamFlagSummary(sorted_bam_mpost_mapq))
+  
+# make big wig
+alignment <- readGAlignments(sorted_bam_mpost_mapq)
+reads_coverage <- coverage(alignment)
+
+export.bw(reads_coverage, con = paste0(base, "_BigWig.bw"))
+
+
+```
+
+###peak calling
+
+```{r}
+input <- c("input1","input2", "input3")
+bam <- c("bam1","bam2", "bam3")
+broad <- c("no","no", "yes")
+base <- c("base1", "base2", "base3")
+
+data <- data.frame(Base = base, BAM = bam, Input = input, Broad = broad)
+
+macs2_loop <- function (data, bw, q){
+  
+  ### meant to have this actually run the macs2 command from the command line but for some reason it won't run it. I think this has something to do with the path of the program and a problem with how R studio interprets the path. Anyway, it still spits out the command that can be copied and pasted into the command line. 
+  ### it also will create separate folders in the "path_output" to put the resulting files in
+  
+  if (missing(bw)) {
+    bw <- 150
+  }
+  if (missing(q)) {
+    q <- 0.05
+  }
+  
+   for (i in 1:nrow(data)) {
+     for (i in seq_along(data)) {
+     
+      dir.create(paste0(path_output, output_names[i], "_peaks/"))
+      path_output2 <- paste0(path_output, output_names[i], "_peaks/")
+      
+      print(paste0("macs2 callpeak -t ", path_input, bam_files[i], " -c ", path_input, input_files[i], " -g mm --outdir ", path_output2, " -n ",  output_names[i], "_macs2_samtools --bw ", bw, " -q ", q))  
+     }
+   }
+}
+
+
+  if (broad == TRUE) {
+    for (i in seq_along(input_files)) {
+      
+      dir.create(paste0(path_output, output_names[i], "_broad_peaks/"))
+      path_output2 <- paste0(path_output, output_names[i], "_broad_peaks/")
+      
+      print(paste0("macs2 callpeak -t ", path_input, bam_files[i], " -c ", path_input, input_files[i], " -g mm --outdir ", path_output2, " -n ",  output_names[i], "_macs2_broad_samtools --broad --bw ", bw, " -q ", q))  
+    }
+  }
+
+    for (i in seq_along(input_files)) {
+      
+      dir.create(paste0(path_output, output_names[i], "_peaks/"))
+      path_output2 <- paste0(path_output, output_names[i], "_peaks/")
+      
+      print(paste0("macs2 callpeak -t ", path_input, bam_files[i], " -c ", path_input, input_files[i], " -g mm --outdir ", path_output2, " -n ",  output_names[i], "_macs2_samtools --bw ", bw, " -q ", q))  
+    }
+  
+
+
+macs2_loop(input_files, bam_files, output_names, path_input, path_output, broad = FALSE)
+
+```
+
+
