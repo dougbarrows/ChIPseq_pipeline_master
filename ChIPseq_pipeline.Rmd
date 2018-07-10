@@ -12,25 +12,39 @@ knitr::opts_chunk$set(echo = TRUE)
 # 
 ```{r}
 library(ShortRead)
-
+library(htmlwidgets)
 
 fastQ <- readFastq("./bladder_control_ENCFF188POD.fastq")
 dupLogical <- srduplicated(fastQ)
 numberOfDups <- table(dupLogical)
 nonDups <- fastQ[dupLogical]
 
-myQA <- qa("./bladder_control_ENCFF188POD.fastq")
-myReport <- report(myQA)
+myQA <- qa("./small_fastq/sampled_ENCFF000CXH.fastq")
+myReport <- report(myQA, dest = paste0(fastq_path, fastq[i], "_ShortreadQA.html"))
 browseURL(myReport)
+report(myReport, dest = paste0(fastq_path, fastq[i], "_ShortreadQA.html"))
+saveWidget(myReport, file = paste0(fastq_path, fastq[i], "_ShortreadQA.html"))
+
+# cant get this to work - keeps on saying permission is denied but it should be able to read and write the file. If I change permissions to let it execute it says "cannot execute binary file". 
+library(fastqcr)
+fastqc_path <- list.files("./fastq/", full.names = TRUE)
+fastqc(fastqc.path = fastqc_path)
 
 ```
 
 ```{r}
-fastq_path <- ""
 
-fastQ_to_bigwig <- function(fastq_path, mapq) {
+#### must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
 
-  
+
+fastq_path <- "./fastq_newcomp/"
+sample_sheet_path <- "./sample_sheet_peakscalling.csv"
+
+fastQ_to_bigwig_to_peaks(fastq_path)
+
+fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome) {
+
+library(ShortRead)
 library(Rsubread)
 library(Rsamtools)
 library(BSgenome.Hsapiens.UCSC.hg38)
@@ -44,21 +58,53 @@ if (missing(mapq)) {
   mapq <- 15
 }
   
+if (missing(buildIndex)) {
+  buildIndex <- FALSE
+}
+  
 fastq <- list.files(fastq_path)
-########
-# inputs
-#########
 
-fastq <- "bladder_control_ENCFF188POD.fastq"
-mapq <- 15
+ShortRead_QA_path <- paste0(fastq_path, "ShortRead_QA")
+dir.create(ShortRead_QA_path)
 
+BAM_path <- paste0(fastq_path, "BAM_files/")
+dir.create(BAM_path)
+
+ChIPQC_path <- paste0(fastq_path, "ChIP_QC")
+dir.create(ChIPQC_path)
+
+bigwig_path <- paste0(fastq_path, "bigwigs/")
+dir.create(bigwig_path)
 ###########
 
-# Now we loop through file, filter reads and write out a FastQ of our filtered reads
+# Now we loop through file to analyze each one
 
-fqStreamer <- FastqStreamer("./bladder_control_ENCFF188POD.fastq",
+bam_files <- vector(mode = "character", length = length(fastq))
+
+for (i in seq_along( fastq)) {
+  
+##########
+# do some QC with shortread package
+##########
+  
+print(paste0("ShortRead QA analysis for", fastq[i], "..."))
+  
+shortread_fastq <- readFastq(paste0(fastq_path, fastq[i]))
+dupLogical <- srduplicated(shortread_fastq)
+numberOfDups <- table(dupLogical)
+perc_dups <- numberOfDups[2]/(numberOfDups[1] + numberOfDups[2])
+names(perc_dups) <- "Percent_Duplicates"
+out <- capture.output(perc_dups)
+cat( out, file = paste0(ShortRead_QA_path, "/", fastq[i], "_duplication_perc.txt"), sep = "\n", append = TRUE)
+
+myQA <- qa("./small_fastq/sampled_ENCFF000CXH.fastq")
+myReport <- report(myQA, dest = paste0(ShortRead_QA_path, "/", fastq[i], "_ShortreadQA.html"))
+######
+
+# filter reads and write out a FastQ of our filtered reads
+fqStreamer <- FastqStreamer(paste0(fastq_path, fastq[i]),
                             n=5000000)
-filtered_fastq <- paste0( "filtered_",fastq)
+filtered_fastq <- paste0( fastq_path, "filtered_",fastq[i])
 
 TotalReads <- 0
 TotalReadsFilt <- 0
@@ -76,7 +122,8 @@ TotalReadsFilt
 ########## build the index for Rsubread alignment - only need to do this once
 
 # Here we cycle through the major chromosomes and create a DNAStringSet object from the retrieved sequences.
-if (buildIndex = TRUE) {
+if (buildIndex == TRUE) {
+  print("Building index...")
   
   mainChromosomes <- paste0("chr", c(1:19, "X", "Y", "M"))
   mainChrSeq <- lapply(mainChromosomes,
@@ -98,53 +145,142 @@ if (buildIndex = TRUE) {
 }
 ###### now to the alignment
 
-# exreact the base part of the name of each fast1 file so that this can be ussed as the base for output files generated below
+# extract the base part of the name of each fast1 file so that this can be ussed as the base for output files generated below
 if (grepl(".fastq", filtered_fastq)) {
-  base <- strsplit(filtered_fastq, ".fastq", fixed = TRUE)[[1]][1]
+  base <- strsplit(fastq[i], ".fastq", fixed = TRUE)[[1]][1]
 } else if (grepl(".fq", filtered_fastq)){
-  base <- strsplit(filtered_fastq, ".fq", fixed = TRUE)[[1]][1]
+  base <- strsplit(fastq[i], ".fq", fixed = TRUE)[[1]][1]
 }
 
 #align with Rsubread
+
 bam <- paste0(base, ".BAM")
 
 # here I am using the filtered fastq, do we need to do this given that we filter out low quality alignments? I suppose we don't, but it might make the alignments faster if we are gettign rid of bad reads befroehand
 
-align(index = "BSgenome.Hsapiens.UCSC.hg19",
+print(paste0("Aligning ", fastq[i], "..."))
+out <- capture.output(align(index = "BSgenome.Hsapiens.UCSC.hg19",
       readfile1 = filtered_fastq,
-      output_file=bam,
-      type="dna",phredOffset = 64)
+      output_file = paste0(BAM_path, bam),
+      type="dna",phredOffset = 64))
 
-sorted_bam_pre <- paste0(base, "_sorted")
-sortBam(bam, sorted_bam_pre) # don't put ".BAM" at end of output file as it adds it anyway
+cat( out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 
-sorted_bam_post <- paste0(base, "_sorted.BAM")
+print(paste0("Sorting ", fastq[i], "..."))
+sorted_bam_pre <- paste0( BAM_path, base, "_sorted")
+sortBam(paste0(BAM_path, bam), sorted_bam_pre) # don't put ".BAM" at end of output file as it adds it anyway
+
+sorted_bam_post <- paste0(BAM_path, base, "_sorted.BAM")
 indexBam(sorted_bam_post)
 
-print("BamFlagSummary without filtering:")
-print(quickBamFlagSummary(sorted_bam_post))
+file.remove(paste0(BAM_path, bam))
+
+out <- capture.output(quickBamFlagSummary(sorted_bam_post))
+cat("BamFlagSummary - Before Filtering", out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 
 # filter out low quality reads
+
+print(paste0("Filtering out low quality reads and duplicates for ", fastq[i], "..."))
 param <- ScanBamParam(mapqFilter = mapq, 
                        flag = scanBamFlag(isDuplicate = FALSE))
-sorted_bam_mpost_mapq <- paste0(sorted_bam_pre, "nodup_q", as.character(mapq), ".BAM")
-filterBam(file = sorted_bam_post, destination = sorted_bam_mpost_mapq, param = param)
+sorted_bam_post_mapq <- paste0(sorted_bam_pre, "nodup_q", as.character(mapq), ".BAM")
+filterBam(file = sorted_bam_post, destination = sorted_bam_post_mapq, param = param)
 
-print("BamFlagSummary post filtering:")
-print(quickBamFlagSummary(sorted_bam_mpost_mapq))
+bam_files[i] <- sorted_bam_post_mapq # this will eventualy be used to get the exact names of the BAM files generated to call peaks
+
+out <- capture.output(quickBamFlagSummary(sorted_bam_post_mapq))
+cat("BamFlagSummary - After Filtering", out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 
 # make figure showing all mapped reads to each chromosome
-mappedReads <- idxstatsBam(sorted_bam_mpost_mapq)
+mappedReads <- idxstatsBam(sorted_bam_post_mapq)
 TotalMapped <- sum(mappedReads[,"mapped"])
 ggplot(mappedReads,aes(x=seqnames,y=mapped))+
-  geom_bar(stat="identity")
+  geom_bar(stat="identity") + ggtitle(fastq[i]) + coord_flip()
+ggsave(paste0(BAM_path, fastq[i], "_chromDistr.pdf"))
   
+#######
+# ChIP QC
+library(ChIPQC)
+# using the pre-filtered BAM
+print("ChIP QC for unfiltered fastq[i]...")
+
+QCresult <- ChIPQCsample(reads = sorted_bam_post,
+                         annotation="hg19",
+                         blacklist = "~/Desktop/R_functions/ChIP-seq_pipeline/ChIPseq_pipeline//wgEncodeHg19ConsensusSignalArtifactRegions.bed")
+out <- capture.output(QCmetrics(QCresult))
+cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
+
+myFlags <- flagtagcounts(QCresult)
+out <- capture.output(myFlags["DuplicateByChIPQC"]/myFlags["Mapped"])
+cat( out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
+
+plotCC(QCresult) + ggtitle(fastq[i])
+ggsave(paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_CCplot.pdf")) 
+
+plotSSD(QCresult)+xlim(0,5) + ggtitle(fastq[i])
+ggsave(paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_SSDplot.pdf"))
+
+######
+
 # make big wig
-alignment <- readGAlignments(sorted_bam_mpost_mapq)
+
+print(paste0("Making BigWig for ", fastq[i], "..."))
+alignment <- readGAlignments(sorted_bam_post_mapq)
 reads_coverage <- coverage(alignment)
 
-export.bw(reads_coverage, con = paste0(base, "_BigWig.bw"))
+export.bw(reads_coverage, con = paste0(bigwig_path, base, "_bigWig.bw"))
+}
 
+#######
+# call peaks with macs2
+
+data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
+
+  if (missing(bw)) {
+    bw <- 150
+  }
+  if (missing(q)) {
+    q <- 0.05
+  }
+    if (missing(genome)) {
+    genome <- "hs"
+  }
+
+  for (i in 1:nrow(data)) {
+     if (data[i,4] == 0) {
+      dir.create(paste0("./", data[i,1], "_peaks/"))
+      path_output <- paste0("./", data[i,1], "_peaks/")
+      input <- bam_files[grep(data[i,3], bam_files)]
+      peaks <- bam_files[grep(data[i,2], bam_files)]
+      
+      macsCommand <- paste0("macs2 callpeak", 
+                   "-t ", peaks, 
+                   " -c ", input, 
+                   " -g ", genome,
+                   " --outdir ", path_output, 
+                   " -n ",  data[i,1], 
+                   " --bw ", bw, " -q ", q)  
+     }
+     else {
+       dir.create(paste0("./", data[i,1], "_broad_peaks/"))
+      path_output <- paste0("./", data[i,1], "_broad_peaks/")
+      input <- bam_files[grep(data[i,3], bam_files)]
+      peaks <- bam_files[grep(data[i,2], bam_files)]
+      
+      macsCommand <- paste0("macs2 callpeak", 
+                   " -t ", peaks, 
+                   " -c ", input, 
+                   " -g ", genome, 
+                   " --outdir ", path_output, 
+                   " -n ",  data[i,1], 
+                   " --broad", 
+                   " --bw ", bw, " -q ", q)  
+     }
+  }
+  
+  system(macsCommand)
+
+}
 }
 ```
 
@@ -199,6 +335,10 @@ base <- c("base1", "base2", "base3")
 
 data <- data.frame(Base = base, BAM = bam, Input = input, Broad = broad)
 
+#############
+
+data <- read.delim("./sample_sheet_peakscalling.csv", header = TRUE, sep = ",")
+
 macs2_loop <- function (data,  bw, q, genome){
   
   if (missing(bw)) {
@@ -211,40 +351,47 @@ macs2_loop <- function (data,  bw, q, genome){
     genome <- "hs"
   }
 
-   for (i in 1:nrow(data)) {
+  for (i in 1:nrow(data)) {
      if (data[i,4] == 0) {
       dir.create(paste0("./", data[i,1], "_peaks/"))
       path_output <- paste0("./", data[i,1], "_peaks/")
+      input <- bam_files[grep(data[i,3], bam_files)]
+      peaks <- bam_files[grep(data[i,2], bam_files)]
       
-      print(paste0("macs2 callpeak", 
-                   "-t ", data[i, 2], 
-                   " -c ", data[i, 3], 
+      macsCommand <- paste0("macs2 callpeak", 
+                   "-t ", peaks, 
+                   " -c ", input, 
                    " -g ", genome,
                    " --outdir ", path_output, 
                    " -n ",  data[i,1], 
-                   " --bw ", bw, " -q ", q))  
+                   " --bw ", bw, " -q ", q)  
      }
      else {
        dir.create(paste0("./", data[i,1], "_broad_peaks/"))
       path_output <- paste0("./", data[i,1], "_broad_peaks/")
+      input <- bam_files[grep(data[i,3], bam_files)]
+      peaks <- bam_files[grep(data[i,2], bam_files)]
       
-      print(paste0("macs2 callpeak", 
-                   " -t ", data[i, 2], 
-                   " -c ", data[i, 3], 
+      macsCommand <- paste0("macs2 callpeak", 
+                   " -t ", peaks, 
+                   " -c ", input, 
                    " -g ", genome, 
                    " --outdir ", path_output, 
                    " -n ",  data[i,1], 
                    " --broad", 
-                   " --bw", bw, " -q ", q))  
+                   " --bw ", bw, " -q ", q)  
      }
-   }
+  }
+  
+  system(macsCommand)
+
 }
   
 
 
 macs2_loop(data = data)
 
-#### must open r studio fro terminal with command "open -a RStudio" for the system command to inheret the right path
+#### must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path
 dir.create("./PeakDirectory")
 ChIP <- "filtered_K27Ac_bladder_ENCFF413QKU_sorted_q_rmdup15.BAM"
 control <- "filtered_bladder_control_ENCFF188POD_sorted_q15_nodup15.BAM"
@@ -255,5 +402,6 @@ macsCommand <- paste0("macs2 callpeak -t ", ChIP,
                       " --outdir PeakDirectory")
 system(macsCommand)
 ```
+
 
 
