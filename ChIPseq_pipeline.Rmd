@@ -36,11 +36,13 @@ fastqc(fastqc.path = fastqc_path)
 
 #### must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
 
+# also make sure you are in python2 environment before you open Rstudio from terminal - "source activate python2"
+
 
 fastq_path <- "./fastq_newcomp/"
 sample_sheet_path <- "./sample_sheet_peakscalling.csv"
 
-fastQ_to_bigwig_to_peaks(fastq_path)
+fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, sample_sheet_path = sample_sheet_path)
 
 fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome) {
 
@@ -97,7 +99,7 @@ names(perc_dups) <- "Percent_Duplicates"
 out <- capture.output(perc_dups)
 cat( out, file = paste0(ShortRead_QA_path, "/", fastq[i], "_duplication_perc.txt"), sep = "\n", append = TRUE)
 
-myQA <- qa("./small_fastq/sampled_ENCFF000CXH.fastq")
+myQA <- qa(paste0(fastq_path, fastq[i]))
 myReport <- report(myQA, dest = paste0(ShortRead_QA_path, "/", fastq[i], "_ShortreadQA.html"))
 ######
 
@@ -162,7 +164,7 @@ print(paste0("Aligning ", fastq[i], "..."))
 out <- capture.output(align(index = "BSgenome.Hsapiens.UCSC.hg19",
       readfile1 = filtered_fastq,
       output_file = paste0(BAM_path, bam),
-      type="dna",phredOffset = 64))
+      type="dna"))  # in Tom's class he had "phredOffset = 64" in this command too, but Rsubread kept throwing a warning saying it was wrong, so I'll just keep the default for now
 
 cat( out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 
@@ -231,13 +233,56 @@ reads_coverage <- coverage(alignment)
 export.bw(reads_coverage, con = paste0(bigwig_path, base, "_bigWig.bw"))
 }
 
+##########
+# get plots over genes using soGGi
+##########
+
+library(devtools)
+library(soGGi)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+# get GRanges object of all genes
+whole_gene <- genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+bigWigs <- list.files(paste0(fastq_path, "bigwigs"), full.names = TRUE)
+whole_gene_plots <- vector(mode = "list", length = length(bigWigs))
+
+names(whole_gene) <- NULL # needed to do this or the "percentOfRegion" setting below threw an error
+
+for (i in seq_along(bigWigs)) {
+  
+  whole_gene_plots[[i]] <- regionPlot(bigWigs[i],
+                        testRanges = whole_gene,
+                        style = "percentOfRegion",
+                        format = "bigwig")
+  
+}
+
+
+for( i in seq_along(whole_gene_plots)) {
+  if (i == 1){
+    whole_gene_plots_cat <- whole_gene_plots[[i]]
+  }
+  else {
+    whole_gene_plots_cat <- c(whole_gene_plots_cat, whole_gene_plots[[i]])
+  }
+  
+}
+
+plotRegion(whole_gene_plots_cat)
+ggsave(paste0(fastq_path, "bigwigs/bigwigSignal_overGenes.pdf"))
+
 #######
+
+# this will only run peaks if a sample sheet path is specified in the original call to the function
+if (!missing(sample_sheet_path)) {
 # call peaks with macs2
+print("Calling Peaks...")
 
 data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
 
   if (missing(bw)) {
-    bw <- 150
+    bw <- 300
   }
   if (missing(q)) {
     q <- 0.05
@@ -246,15 +291,16 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
     genome <- "hs"
   }
 
+
   for (i in 1:nrow(data)) {
      if (data[i,4] == 0) {
-      dir.create(paste0("./", data[i,1], "_peaks/"))
-      path_output <- paste0("./", data[i,1], "_peaks/")
+      dir.create(paste0(fastq_path, data[i,1], "_peaks/"))
+      path_output <- paste0(fastq_path, data[i,1], "_peaks/")
       input <- bam_files[grep(data[i,3], bam_files)]
       peaks <- bam_files[grep(data[i,2], bam_files)]
       
       macsCommand <- paste0("macs2 callpeak", 
-                   "-t ", peaks, 
+                   " -t ", peaks, 
                    " -c ", input, 
                    " -g ", genome,
                    " --outdir ", path_output, 
@@ -262,8 +308,8 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
                    " --bw ", bw, " -q ", q)  
      }
      else {
-       dir.create(paste0("./", data[i,1], "_broad_peaks/"))
-      path_output <- paste0("./", data[i,1], "_broad_peaks/")
+       dir.create(paste0(fastq_path, data[i,1], "_broad_peaks/"))
+      path_output <- paste0(fastq_path, data[i,1], "_broad_peaks/")
       input <- bam_files[grep(data[i,3], bam_files)]
       peaks <- bam_files[grep(data[i,2], bam_files)]
       
@@ -276,11 +322,11 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
                    " --broad", 
                    " --bw ", bw, " -q ", q)  
      }
+    system(macsCommand)
   }
-  
-  system(macsCommand)
-
 }
+else { print("Did not call peaks")}
+
 }
 ```
 
@@ -392,16 +438,109 @@ macs2_loop <- function (data,  bw, q, genome){
 macs2_loop(data = data)
 
 #### must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path
-dir.create("./PeakDirectory")
-ChIP <- "filtered_K27Ac_bladder_ENCFF413QKU_sorted_q_rmdup15.BAM"
-control <- "filtered_bladder_control_ENCFF188POD_sorted_q15_nodup15.BAM"
+dir.create("./PeakDirectory2")
+ChIP <- "./fastq_newcomp/BAM_files/filtered_K27Ac_bladder_ENCFF413QKU_sortednodup_q15.BAM"
+control <- "./fastq_newcomp/BAM_files/filtered_bladder_control_ENCFF188POD_sortednodup_q15.BAM"
 
 macsCommand <- paste0("macs2 callpeak -t ", ChIP,
                       " -c ", control,
                       " -n ", "K27ac_encodebladder",
-                      " --outdir PeakDirectory")
+                      " --outdir PeakDirectory2")
 system(macsCommand)
+system("echo $PATH")
 ```
 
+### ngs plots using soggi
+
+```{r}
+library(devtools)
+library(soGGi)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+# get regions of 500 bp on either side of TSS
+whole_gene <- genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
+TSS <- resize(whole_gene,500,fix = "start")
+#TTS <- resize(dsds,500,fix = "end")
+
+
+#### make loop to make ChIP profile object for all in big wig file and make plot for all! - TSS!
+
+bigWigs <- list.files(paste0(fastq_path, "bigwigs"), full.names = TRUE)
+TSS_plots <- vector(mode = "list", length = length(bigWigs))
+
+for (i in seq_along(bigWigs)) {
+  
+  TSS_plots[i] <- regionPlot(bigWigs[i],
+                        testRanges = TSS,
+                        style = "point",
+                        format = "bigwig")
+}
+
+
+for( i in seq_along(TSS_plots)) {
+  if (i == 1){
+    TSS_plots_cat <- TSS_plots[[i]]
+  }
+  else {
+    TSS_plots_cat <- c(TSS_plots_cat, TSS_plots[[i]])
+  }
+  
+}
+
+plotRegion(TSS_plots_cat)
+
+for( i in seq_along(TSS_plots)) {
+  if (i == 1){
+    TSS_plots_rbind <- TSS_plots[[i]]
+  }
+  else {
+    TSS_plots_rbind <- rbind(TSS_plots_rbind, TSS_plots[[i]])
+  }
+  
+}
+
+plotRegion()
+
+#### make loop to make ChIP profile object for all in big wig file and make plot for all! - whole gene!
+
+bigWigs <- list.files(paste0(fastq_path, "bigwigs"), full.names = TRUE)
+whole_gene_plots <- vector(mode = "list", length = length(bigWigs))
+
+names(whole_gene) <- NULL # needed to do this or the "percentOfRegion" setting below threw an error
+
+for (i in seq_along(bigWigs)) {
+  
+  whole_gene_plots[[i]] <- regionPlot(bigWigs[i],
+                        testRanges = whole_gene,
+                        style = "percentOfRegion",
+                        format = "bigwig")
+  
+}
+
+
+for( i in seq_along(whole_gene_plots)) {
+  if (i == 1){
+    whole_gene_plots_cat <- whole_gene_plots[[i]]
+  }
+  else {
+    whole_gene_plots_cat <- c(whole_gene_plots_cat, whole_gene_plots[[i]])
+  }
+  
+}
+
+plotRegion(whole_gene_plots_cat)
+
+for( i in seq_along(whole_gene_plots)) {
+  if (i == 1){
+    whole_gene_plots_rbind <- whole_gene_plots[[i]]
+  }
+  else {
+    whole_gene_plots_rbind <- rbind(whole_gene_plots_rbind, whole_gene_plots[[i]])
+  }
+  
+}
+
+plotRegion()
+```
 
 
