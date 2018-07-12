@@ -32,16 +32,21 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #install.packages("ggplot2")
 
+################
+# must have BSgenome index files for Rsubread in the same folder as this markdown
+# if not, then put buildIndex = TRUE and it will get built in the pipeline
+##############
+
 #####if calling peaks!!!
 # must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
 # also make sure you are in python2 environment before you open Rstudio from terminal - "source activate python2"
+# the pipeline will not call peaks if you do not put a sample sheet path in the command
 ######
 
-fastq_path <- "../../../ChIPseq_UMUC1_20180711/fastq_zipped/EV_k27ac/"
-sample_sheet_path <- "./sample_sheet_peakscalling.csv"
+fastq_path <- "./mouse_cerebellum/"
+sample_sheet_path <- "./sample_sheet_peakscalling_msCerebellum.csv"
 
-fastQ_to_bigwig_to_peaks(fastq_path = fastq_path #, sample_sheet_path = sample_sheet_path
-                         )
+fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, sample_sheet_path = sample_sheet_path, genome = "mm10", buildIndex = TRUE)
 
 fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome) {
 
@@ -309,19 +314,12 @@ for (i in seq_along(bigWigs)) {
   
 }
 
-
-for( i in seq_along(whole_gene_plots)) {
-  if (i == 1){
-    whole_gene_plots_cat <- whole_gene_plots[[i]]
-  }
-  else {
-    whole_gene_plots_cat <- c(whole_gene_plots_cat, whole_gene_plots[[i]])
-  }
-  
+# this will make a figure for each chip separately, need to work on code below in the chunk devoted to soGGi with either rbind, or the cconcatenation to get all in same plot. Basically it wouldn't properly concatenate in the for loop as I had it set up below. 
+for(i in seq_along(whole_gene_plots)) {
+  plotRegion(whole_gene_plots[[i]])
+  ggsave(paste0(strsplit(metadata(whole_gene_plots[[i]])$names, ".bw", fixed = TRUE)[[1]], ".pdf"))
 }
 
-plotRegion(whole_gene_plots_cat)
-ggsave(paste0(fastq_path, "bigwigs/bigwigSignal_overGenes.pdf"))
 
 #######
 
@@ -594,7 +592,13 @@ for (i in seq_along(bigWigs)) {
   
 }
 
+# this will make a figure for each chip separately, need to work on code below with either rbind, or the cconcatenation to get all in same plot
+for(i in seq_along(whole_gene_plots)) {
+  plotRegion(whole_gene_plots[[i]])
+  ggsave(paste0(strsplit(metadata(whole_gene_plots[[i]])$names, ".bw", fixed = TRUE)[[1]], ".pdf"))
+}
 
+# this only works for 1 or two chips, after the second it has trouble concatenating them properly. If you manually concatenate them, it works
 for( i in seq_along(whole_gene_plots)) {
   if (i == 1){
     whole_gene_plots_cat <- whole_gene_plots[[i]]
