@@ -43,8 +43,8 @@ knitr::opts_chunk$set(echo = TRUE)
 # the pipeline will not call peaks if you do not put a sample sheet path in the command
 ######
 
-fastq_path <- "./mouse_cerebellum/"
-sample_sheet_path <- "./sample_sheet_peakscalling_msCerebellum.csv"
+fastq_path <- "./fastq_newcomp/"
+sample_sheet_path <- "./sample_sheet_peakscalling.csv"
 
 fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, sample_sheet_path = sample_sheet_path, genome = "mm10", buildIndex = TRUE)
 
@@ -377,6 +377,32 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
                    " --bw ", bw, " -q ", q)  
      }
     system(macsCommand)
+    
+  #genomic annotation
+    if (genome == "hg19") {
+    txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+    } else if (genome == "hg38") {
+    txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+    } else if (genome == "mm9") {
+    txdb <- TxDb.Mmusculus.UCSC.mm9.knownGene
+    } else if (genome == "mm10") {
+    txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+    }
+    if (data[i,4] == 0) {
+    peakAnnoList_marklist <- annotatePeak(peak = paste0(path_output, data[i,1], "_peaks.narrowPeak" ),
+                                          TxDb = txdb,
+                                          tssRegion = c(-5000, 3000),
+                                          verbose = FALSE)
+    plotAnnoBar(peakAnnoList_marklist)
+    ggsave(paste0(path_output, data[i,1], "_annotation.pdf"), height = 4, width =  6)
+   } else {
+    peakAnnoList_marklist <- annotatePeak(peak = paste0(path_output, data[i,1], "_peaks.broadPeak" ),
+                                          TxDb = txdb,
+                                          tssRegion = c(-5000, 3000),
+                                          verbose = FALSE)
+    plotAnnoBar(peakAnnoList_marklist)
+    ggsave(paste0(path_output, data[i,1], "_annotation.pdf"), height = 4, width =  6)
+    
   }
 }
 
