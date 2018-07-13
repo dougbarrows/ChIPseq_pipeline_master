@@ -20,11 +20,14 @@ knitr::opts_chunk$set(echo = TRUE)
 #biocLite("Rsamtools")
 #biocLite("BSgenome.Hsapiens.UCSC.hg19")
 #biocLite("BSgenome.Hsapiens.UCSC.hg38")
+#biocLite("BSgenome.Mmusculus.UCSC.mm9")
 #biocLite("BSgenome.Mmusculus.UCSC.mm10")
 #biocLite("rtracklayer")
 #biocLite("GenomicAlignments")
 #biocLite("ChIPQC")
 #biocLite("TxDb.Hsapiens.UCSC.hg19.knownGene")
+#biocLite("TxDb.Hsapiens.UCSC.hg38.knownGene")
+#biocLite("TxDb.Mmusculus.UCSC.mm9.knownGene")
 #biocLite("TxDb.Mmusculus.UCSC.mm10.knownGene")
 
 #install.packages("devtools")
@@ -34,19 +37,23 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ################
 # must have BSgenome index files for Rsubread in the same folder as this markdown
-# if not, then put buildIndex = TRUE and it will get built in the pipeline
+# if not, then put buildIndex = TRUE and it will get built in the pipeline 
 ##############
-
+ 
+##########################
 #####if calling peaks!!!
 # must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
+# can check you are okay by running command "system("echo $PATH)", which should return the same path as if you were to run "echo $PATH" in the terminal and should include path to macs2 (in my case it is in the anaconda folder)
 # also make sure you are in python2 environment before you open Rstudio from terminal - "source activate python2"
 # the pipeline will not call peaks if you do not put a sample sheet path in the command
-######
+###########################
 
 fastq_path <- "./fastq_newcomp/"
 sample_sheet_path <- "./sample_sheet_peakscalling.csv"
+blacklist_path <- "~/Desktop/R_functions/ChIP-seq_pipeline/ChIPseq_pipeline//wgEncodeHg19ConsensusSignalArtifactRegions.bed"
+genome <- "hg19"
 
-fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, sample_sheet_path = sample_sheet_path, genome = "mm10", buildIndex = TRUE)
+fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, sample_sheet_path = sample_sheet_path, genome = genome, buildIndex = TRUE)
 
 fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome) {
 
@@ -55,6 +62,7 @@ library(Rsubread)
 library(Rsamtools)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(BSgenome.Hsapiens.UCSC.hg19)
+library(BSgenome.Mmusculus.UCSC.mm9)
 library(BSgenome.Mmusculus.UCSC.mm10)
 library(rtracklayer)
 library(GenomicAlignments)
@@ -98,7 +106,7 @@ for (i in seq_along(fastq)) {
 # do some QC with shortread package
 ##########
   
-print(paste0("ShortRead QA analysis for", fastq[i], "..."))
+print(paste0("ShortRead QA analysis for ", fastq[i], "..."))
   
 shortread_fastq <- readFastq(paste0(fastq_path, fastq[i]))
 dupLogical <- srduplicated(shortread_fastq)
@@ -136,9 +144,12 @@ TotalReadsFilt
 if (buildIndex == TRUE) {
   if (i == 1) {
   print("Building index...")
+  
   if (genome == "hg19") {
   mainChromosomes <- paste0("chr", c(1:19, "X", "Y", "M"))
-  mainChrSeq <- lapply(mainChromosomes, function(x) BSgenome.Hsapiens.UCSC.hg19[[x]])
+  mainChrSeq <-
+  lapply(mainChromosomes, function(x)
+  BSgenome.Hsapiens.UCSC.hg19[[x]])
   names(mainChrSeq) <- mainChromosomes
   mainChrSeqSet <- DNAStringSet(mainChrSeq)
   
@@ -152,23 +163,52 @@ if (buildIndex == TRUE) {
   buildindex("BSgenome.Hsapiens.UCSC.hg19",
   "BSgenome.Hsapiens.UCSC.hg19.fa")
   }
-  if (genome == "mm10") {
+  
+  if (genome == "hg38") {
   mainChromosomes <- paste0("chr", c(1:19, "X", "Y", "M"))
-  mainChrSeq <- lapply(mainChromosomes, function(x) BSgenome.Mmusculus.UCSC.mm10[[x]])
+  mainChrSeq <-
+  lapply(mainChromosomes, function(x)
+  BSgenome.Hsapiens.UCSC.hg38[[x]])
   names(mainChrSeq) <- mainChromosomes
   mainChrSeqSet <- DNAStringSet(mainChrSeq)
   
-  # Now we have a DNAStringSet object we can use the writeXStringSet to create our FASTA file of sequences to align to.
+  writeXStringSet(mainChrSeqSet,
+  "BSgenome.Hsapiens.UCSC.hg38.fa")
+  
+  buildindex("BSgenome.Hsapiens.UCSC.hg38",
+  "BSgenome.Hsapiens.UCSC.hg38.fa")
+  }
+  
+  if (genome == "mm9") {
+  mainChromosomes <- paste0("chr", c(1:19, "X", "Y", "M"))
+  mainChrSeq <-
+  lapply(mainChromosomes, function(x)
+  BSgenome.Mmusculus.UCSC.mm9[[x]])
+  names(mainChrSeq) <- mainChromosomes
+  mainChrSeqSet <- DNAStringSet(mainChrSeq)
   
   writeXStringSet(mainChrSeqSet,
-  "BSgenome.Mmusculus.UCSC.mm10.fa")
+  "BSgenome.Mmusculus.UCSC.mm9.fa")
   
-  #The Rsubread package offers a faster aligner than the QuasR package although the Rsubread package. For alignment with the Rsubread package we must first build our genome index for Rsubread using the buildindex() function.The buildindex() function simply takes the parameters of our desired index name and the FASTA file to build index from.
+  buildindex("BSgenome.Mmusculus.UCSC.mm9",
+  "BSgenome.Mmusculus.UCSC.mm9.fa")
+  }
+  
+  if (genome == "mm10") {
+  mainChromosomes <- paste0("chr", c(1:19, "X", "Y", "M"))
+  mainChrSeq <-
+  lapply(mainChromosomes, function(x)
+  BSgenome.Mmusculus.UCSC.mm10[[x]])
+  names(mainChrSeq) <- mainChromosomes
+  mainChrSeqSet <- DNAStringSet(mainChrSeq)
+
+  writeXStringSet(mainChrSeqSet,
+  "BSgenome.Mmusculus.UCSC.mm10.fa")
   
   buildindex("BSgenome.Mmusculus.UCSC.mm10",
   "BSgenome.Mmusculus.UCSC.mm10.fa")
   }
-}
+  }
 }
 
 ###### now to the alignment
@@ -197,11 +237,29 @@ out <- capture.output(align(index = "BSgenome.Hsapiens.UCSC.hg19",
 cat( out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 }
 
+if (genome == "hg38") {
+out <- capture.output(align(index = "BSgenome.Hsapiens.UCSC.hg38",
+      readfile1 = filtered_fastq,
+      output_file = paste0(BAM_path, bam),
+      type="dna"))  
+
+cat( out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
+}
+
+if (genome == "mm9") {
+out <- capture.output(align(index = "BSgenome.Mmusculus.UCSC.mm9",
+      readfile1 = filtered_fastq,
+      output_file = paste0(BAM_path, bam),
+      type="dna")) 
+
+cat( out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
+}
+
 if (genome == "mm10") {
 out <- capture.output(align(index = "BSgenome.Mmusculus.UCSC.mm10",
       readfile1 = filtered_fastq,
       output_file = paste0(BAM_path, bam),
-      type="dna"))  # in Tom's class he had "phredOffset = 64" in this command too, but Rsubread kept throwing a warning saying it was wrong, so I'll just keep the default for now
+      type="dna")) 
 
 cat( out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 }
@@ -235,29 +293,48 @@ cat("BamFlagSummary - After Filtering", out, file = paste0(BAM_path, fastq[i], "
 mappedReads <- idxstatsBam(sorted_bam_post_mapq)
 TotalMapped <- sum(mappedReads[,"mapped"])
 ggplot(mappedReads,aes(x=seqnames,y=mapped))+
-  geom_bar(stat="identity") + ggtitle(fastq[i]) + coord_flip()
+  geom_bar(stat="identity") + 
+  ggtitle(fastq[i]) + 
+  coord_flip()
 ggsave(paste0(BAM_path, fastq[i], "_chromDistr.pdf"))
   
 #######
 # ChIP QC
 library(ChIPQC)
+
 # using the pre-filtered BAM
 print("ChIP QC for unfiltered fastq[i]...")
 
 if (genome == "hg19") {
-QCresult <- ChIPQCsample(reads = sorted_bam_post,
+  QCresult <- ChIPQCsample(reads = sorted_bam_post,
                          annotation="hg19",
-                         blacklist = "~/Desktop/R_functions/ChIP-seq_pipeline/ChIPseq_pipeline//wgEncodeHg19ConsensusSignalArtifactRegions.bed")
-out <- capture.output(QCmetrics(QCresult))
-cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
+                         blacklist = blacklist_path)
+  out <- capture.output(QCmetrics(QCresult))
+  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
+}
+
+if (genome == "hg38") {
+  QCresult <- ChIPQCsample(reads = sorted_bam_post,
+                         annotation="hg20",
+                         blacklist = blacklist_path)
+  out <- capture.output(QCmetrics(QCresult))
+  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
+}
+
+if (genome == "mm9") {
+  QCresult <- ChIPQCsample(reads = sorted_bam_post,
+                         annotation="mm9",
+                         blacklist = blacklist_path)
+  out <- capture.output(QCmetrics(QCresult))
+  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
 }
 
 if (genome == "mm10") {
-QCresult <- ChIPQCsample(reads = sorted_bam_post,
+  QCresult <- ChIPQCsample(reads = sorted_bam_post,
                          annotation="mm10",
-                         blacklist = "~/Desktop/R_functions/ChIP-seq_pipeline/ChIPseq_pipeline/mm10.blacklist.bed")
-out <- capture.output(QCmetrics(QCresult))
-cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
+                         blacklist = blacklist_path)
+  out <- capture.output(QCmetrics(QCresult))
+  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
 }
 
 myFlags <- flagtagcounts(QCresult)
@@ -288,12 +365,23 @@ export.bw(reads_coverage, con = paste0(bigwig_path, base, "_bigWig.bw"))
 library(devtools)
 library(soGGi)
 library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(TxDb.Mmusculus.UCSC.mm9.knownGene)
 library(TxDb.Mmusculus.UCSC.mm10.knownGene)
 
 # get GRanges object of all genes
 
+
 if (genome == "hg19") {
 whole_gene <- genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
+}
+
+if (genome == "hg38") {
+whole_gene <- genes(TxDb.Hsapiens.UCSC.hg38.knownGene)
+}
+
+if (genome == "mm9") {
+whole_gene <- genes(TxDb.Mmusculus.UCSC.mm9.knownGene)
 }
 
 if (genome == "mm10") {
@@ -341,6 +429,12 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
    }
   if (genome == "hg19") {
     macs2_genome <- "hs"
+  }
+  if (genome == "hg38") {
+    macs2_genome <- "hs"
+  }
+  if (genome == "mm9") {
+    macs2_genome <- "mm"
    }
   if (genome == "mm10") {
     macs2_genome <- "mm"
@@ -407,6 +501,7 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
 }
 
 
+}
 }
 ```
 # QA
