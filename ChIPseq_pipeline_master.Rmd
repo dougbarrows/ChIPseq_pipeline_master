@@ -42,7 +42,7 @@ knitr::opts_chunk$set(echo = TRUE)
  
 ##########################
 #####if calling peaks!!!
-# must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
+# must open r studio from terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
 # can check you are okay by running command "system("echo $PATH)", which should return the same path as if you were to run "echo $PATH" in the terminal and should include path to macs2 (in my case it is in the anaconda folder)
 # also make sure you are in python2 environment before you open Rstudio from terminal - "source activate python2"
 
@@ -233,7 +233,7 @@ if (buildIndex == TRUE) {
   }
 }
 
-###### now to the alignment
+###### now to the alignment using Rsubread
 
 # extract the base part of the name of each fastq file so that this can be used as the base for output files generated below
 if (grepl(".fastq", filtered_fastq)) {
@@ -471,7 +471,7 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
      }
     system(macsCommand)
     
-  #genomic annotation
+  #genomic annotation using the annotatePeak function
     if (genome == "hg19") {
     txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
     } else if (genome == "hg38") {
