@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 ```{r}
-# download packages
+# download packages 
 
 #source("https://bioconductor.org/biocLite.R")
 #biocLite("ShortRead")
@@ -46,7 +46,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # can check you are okay by running command "system("echo $PATH)", which should return the same path as if you were to run "echo $PATH" in the terminal and should include path to macs2 (in my case it is in the anaconda folder)
 # also make sure you are in python2 environment before you open Rstudio from terminal - "source activate python2"
 
-# the pipeline will not call peaks if you do not put a sample sheet path in the command
+# NOTE: the pipeline will not call peaks if you do not put a sample sheet path in the command
 ###########################
 
 fastq_path <- "./small_fastq///"
