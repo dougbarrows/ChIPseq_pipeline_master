@@ -29,11 +29,11 @@ knitr::opts_chunk$set(echo = TRUE)
 #biocLite("TxDb.Hsapiens.UCSC.hg38.knownGene")
 #biocLite("TxDb.Mmusculus.UCSC.mm9.knownGene")
 #biocLite("TxDb.Mmusculus.UCSC.mm10.knownGene")
-
-#install.packages("devtools")
-#install_github("ThomasCarroll/soGGi")
-
+#biocLite("ChIPseeker")
 #install.packages("ggplot2")
+#install.packages("devtools")
+#library(devtools)
+#install_github("ThomasCarroll/soGGi")
 
 ################
 # must have BSgenome index files for Rsubread in the same folder as this markdown
@@ -45,17 +45,21 @@ knitr::opts_chunk$set(echo = TRUE)
 # must open r studio fro terminal with command "open -a RStudio" for the system command to inherit the right path for macs2
 # can check you are okay by running command "system("echo $PATH)", which should return the same path as if you were to run "echo $PATH" in the terminal and should include path to macs2 (in my case it is in the anaconda folder)
 # also make sure you are in python2 environment before you open Rstudio from terminal - "source activate python2"
+
 # the pipeline will not call peaks if you do not put a sample sheet path in the command
 ###########################
 
-fastq_path <- "./fastq_newcomp/"
-sample_sheet_path <- "./sample_sheet_peakscalling.csv"
-blacklist_path <- "~/Desktop/R_functions/ChIP-seq_pipeline/ChIPseq_pipeline//wgEncodeHg19ConsensusSignalArtifactRegions.bed"
+fastq_path <- "./small_fastq///"
+sample_sheet_path <- "./sample_sheet_peakscalling_sampledtest.csv"
+blacklist_path <- "./wgEncodeHg19ConsensusSignalArtifactRegions.bed"
 genome <- "hg19"
+# genome options - mm9, mm10, hg19, hg38
+buildIndex <- FALSE
 
-fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, sample_sheet_path = sample_sheet_path, genome = genome, buildIndex = TRUE)
 
-fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome) {
+fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, genome = genome, buildIndex = buildIndex, blacklist_path = blacklist_path)
+
+fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome, blacklist_path) {
 
 library(ShortRead)
 library(Rsubread)
@@ -67,7 +71,20 @@ library(BSgenome.Mmusculus.UCSC.mm10)
 library(rtracklayer)
 library(GenomicAlignments)
 library(ggplot2)
-
+library(ChIPQC)
+library(devtools)
+library(soGGi)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(TxDb.Mmusculus.UCSC.mm9.knownGene)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ChIPseeker)
+  
+if(missing(blacklist_path)) stop("path to blacklist ('blacklist_path') bed file is required")
+  
+if(missing(genome)) stop("genome ('genome') specification is required")
+  
+if(missing(fastq_path)) stop("path to fastq files ('fastq_path') is required")
   
 if (missing(mapq)) {
   mapq <- 15
@@ -107,7 +124,8 @@ for (i in seq_along(fastq)) {
 ##########
   
 print(paste0("ShortRead QA analysis for ", fastq[i], "..."))
-  
+
+# calculate the percent of duplicates in the fastq file
 shortread_fastq <- readFastq(paste0(fastq_path, fastq[i]))
 dupLogical <- srduplicated(shortread_fastq)
 numberOfDups <- table(dupLogical)
@@ -116,15 +134,19 @@ names(perc_dups) <- "Percent_Duplicates"
 out <- capture.output(perc_dups)
 cat( out, file = paste0(ShortRead_QA_path, "/", fastq[i], "_duplication_perc.txt"), sep = "\n", append = TRUE)
 
+# generate a QA report (similar to FastQC)
 myQA <- qa(paste0(fastq_path, fastq[i]))
 myReport <- report(myQA, dest = paste0(ShortRead_QA_path, "/", fastq[i], "_ShortreadQA.html"))
 ######
 
 # filter reads and write out a FastQ of our filtered reads
+
+# this will pass the fastq file in a certain number of reads at a time (can be reduced if computer can't handle this number)
 fqStreamer <- FastqStreamer(paste0(fastq_path, fastq[i]),
                             n=5000000)
 filtered_fastq <- paste0( fastq_path, "filtered_",fastq[i])
 
+# this loop will use the Fastq streamer to loop through the whole file and filter out reads that have more thatn 10 "N" which means the sequencer couldnt identify the base, and those that have a quality score ('alphabetScore') below a certain value (300 is what Tom used in the course)
 TotalReads <- 0
 TotalReadsFilt <- 0
 while (length(fq <- yield(fqStreamer))>0) {
@@ -158,7 +180,7 @@ if (buildIndex == TRUE) {
   writeXStringSet(mainChrSeqSet,
   "BSgenome.Hsapiens.UCSC.hg19.fa")
   
-  #The Rsubread package offers a faster aligner than the QuasR package although the Rsubread package. For alignment with the Rsubread package we must first build our genome index for Rsubread using the buildindex() function.The buildindex() function simply takes the parameters of our desired index name and the FASTA file to build index from.
+#From Toms course - The Rsubread package offers a faster aligner than the QuasR package (bowtie for R) although the Rsubread package only works on Macs. For alignment with the Rsubread package we must first build our genome index for Rsubread using the buildindex() function.The buildindex() function simply takes the parameters of our desired index name and the FASTA file to build index from.
   
   buildindex("BSgenome.Hsapiens.UCSC.hg19",
   "BSgenome.Hsapiens.UCSC.hg19.fa")
@@ -213,7 +235,7 @@ if (buildIndex == TRUE) {
 
 ###### now to the alignment
 
-# extract the base part of the name of each fastq file so that this can be ussed as the base for output files generated below
+# extract the base part of the name of each fastq file so that this can be used as the base for output files generated below
 if (grepl(".fastq", filtered_fastq)) {
   base <- strsplit(fastq[i], ".fastq", fixed = TRUE)[[1]][1]
 } else if (grepl(".fq", filtered_fastq)){
@@ -277,6 +299,7 @@ out <- capture.output(quickBamFlagSummary(sorted_bam_post))
 cat("BamFlagSummary - Before Filtering", out, file = paste0(BAM_path, fastq[i], "_BAMlog.txt"), sep = "\n", append = TRUE)
 
 # filter out low quality reads
+# mapping quality score (mapq) can be specified, but the default is mapq = 15, which is what ChIPQC uses as its cut off, so seems reasonable
 
 print(paste0("Filtering out low quality reads and duplicates for ", fastq[i], "..."))
 param <- ScanBamParam(mapqFilter = mapq, 
@@ -300,42 +323,16 @@ ggsave(paste0(BAM_path, fastq[i], "_chromDistr.pdf"))
   
 #######
 # ChIP QC
-library(ChIPQC)
+########
 
 # using the pre-filtered BAM
-print("ChIP QC for unfiltered fastq[i]...")
+print(paste0("ChIP QC for unfiltered ", fastq[i], "..."))
 
-if (genome == "hg19") {
-  QCresult <- ChIPQCsample(reads = sorted_bam_post,
-                         annotation="hg19",
+QCresult <- ChIPQCsample(reads = sorted_bam_post,
+                         annotation = genome,
                          blacklist = blacklist_path)
-  out <- capture.output(QCmetrics(QCresult))
-  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
-}
-
-if (genome == "hg38") {
-  QCresult <- ChIPQCsample(reads = sorted_bam_post,
-                         annotation="hg20",
-                         blacklist = blacklist_path)
-  out <- capture.output(QCmetrics(QCresult))
-  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
-}
-
-if (genome == "mm9") {
-  QCresult <- ChIPQCsample(reads = sorted_bam_post,
-                         annotation="mm9",
-                         blacklist = blacklist_path)
-  out <- capture.output(QCmetrics(QCresult))
-  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
-}
-
-if (genome == "mm10") {
-  QCresult <- ChIPQCsample(reads = sorted_bam_post,
-                         annotation="mm10",
-                         blacklist = blacklist_path)
-  out <- capture.output(QCmetrics(QCresult))
-  cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
-}
+out <- capture.output(QCmetrics(QCresult))
+cat("ChIP QC Metrics for unfiltered", out, file = paste0(ChIPQC_path, "/", fastq[i], "_ChIPQC_output.txt"), sep = "\n", append = TRUE)
 
 myFlags <- flagtagcounts(QCresult)
 out <- capture.output(myFlags["DuplicateByChIPQC"]/myFlags["Mapped"])
@@ -362,12 +359,8 @@ export.bw(reads_coverage, con = paste0(bigwig_path, base, "_bigWig.bw"))
 # get plots over genes using soGGi
 ##########
 
-library(devtools)
-library(soGGi)
-library(TxDb.Hsapiens.UCSC.hg19.knownGene)
-library(TxDb.Hsapiens.UCSC.hg38.knownGene)
-library(TxDb.Mmusculus.UCSC.mm9.knownGene)
-library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+print(paste0("Making gene region signal plots from bigwigs..."))
+
 
 # get GRanges object of all genes
 
@@ -402,16 +395,22 @@ for (i in seq_along(bigWigs)) {
   
 }
 
-# this will make a figure for each chip separately, need to work on code below in the chunk devoted to soGGi with either rbind, or the cconcatenation to get all in same plot. Basically it wouldn't properly concatenate in the for loop as I had it set up below. 
+# this will make a figure for each chip separately, need to work on code below in the chunk devoted to soGGi with either rbind, or the concatenation to get all in same plot. Basically it wouldn't properly concatenate in the for loop as I had it set up below. 
 for(i in seq_along(whole_gene_plots)) {
   plotRegion(whole_gene_plots[[i]])
   ggsave(paste0(strsplit(metadata(whole_gene_plots[[i]])$names, ".bw", fixed = TRUE)[[1]], ".pdf"))
 }
 
 
-#######
+##############
+
+# Peak Calling
 
 # this will only run peaks if a sample sheet path is specified in the original call to the function
+
+###############
+
+
 if (!missing(sample_sheet_path)) {
 # call peaks with macs2
 print("Calling Peaks...")
@@ -482,6 +481,7 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
     } else if (genome == "mm10") {
     txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
     }
+    
     if (data[i,4] == 0) {
     peakAnnoList_marklist <- annotatePeak(peak = paste0(path_output, data[i,1], "_peaks.narrowPeak" ),
                                           TxDb = txdb,
