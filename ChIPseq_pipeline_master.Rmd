@@ -355,6 +355,11 @@ reads_coverage <- coverage(alignment)
 export.bw(reads_coverage, con = paste0(bigwig_path, base, "_bigWig.bw"))
 }
 
+# this is from Tom's course and will produce a normalized bigwig where reads are scaled to the number of mapped reads multiplied by a million (reads per million)
+coverage_norm <- coverage(alignment,
+                      weight = (10^6)/TotalMapped)
+export.bw(coverage_norm, paste0(bigwig_path, base, "_bigWig_norm.bw"))
+
 ##########
 # get plots over genes using soGGi
 ##########
