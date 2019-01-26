@@ -49,7 +49,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # NOTE: the pipeline will not call peaks if you do not put a sample sheet path in the command
 ###########################
 
-fastq_path <- "./small_fastq///"
+fastq_path <- "./small_fastq//"
 sample_sheet_path <- "./sample_sheet_peakscalling_sampledtest.csv"
 blacklist_path <- "./wgEncodeHg19ConsensusSignalArtifactRegions.bed"
 genome <- "hg19"
@@ -59,7 +59,7 @@ buildIndex <- FALSE
 
 fastQ_to_bigwig_to_peaks(fastq_path = fastq_path, genome = genome, buildIndex = buildIndex, blacklist_path = blacklist_path)
 
-fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq, buildIndex, sample_sheet_path,  bw, q, genome, blacklist_path) {
+fastQ_to_bigwig_to_peaks <- function(fastq_path, mapq = 15, buildIndex, sample_sheet_path,  bw = 300, q = 0.05, genome, blacklist_path) {
 
 library(ShortRead)
 library(Rsubread)
@@ -80,19 +80,13 @@ library(TxDb.Mmusculus.UCSC.mm9.knownGene)
 library(TxDb.Mmusculus.UCSC.mm10.knownGene)
 library(ChIPseeker)
   
+if(missing(buildIndex)) stop("No 'buildIndex' argument specified, indicate whether you want an index built")
+  
 if(missing(blacklist_path)) stop("path to blacklist ('blacklist_path') bed file is required")
   
 if(missing(genome)) stop("genome ('genome') specification is required")
   
 if(missing(fastq_path)) stop("path to fastq files ('fastq_path') is required")
-  
-if (missing(mapq)) {
-  mapq <- 15
-}
-  
-if (missing(buildIndex)) {
-  buildIndex <- FALSE
-}
  
 if (missing(sample_sheet_path)) {
   print("No sample sheet included, no peaks will be called")
@@ -422,12 +416,6 @@ print("Calling Peaks...")
 
 data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
 
-  if (missing(bw)) {
-    bw <- 300
-  }
-  if (missing(q)) {
-    q <- 0.05
-  }
   if (missing(genome)) {
     macs2_genome <- "hs"
    }
@@ -507,7 +495,7 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
 
 
 }
-sessioninfo()
+writeLines(capture.output(sessionInfo()), "sessionInfo.txt")
 }
 ```
 # QA
