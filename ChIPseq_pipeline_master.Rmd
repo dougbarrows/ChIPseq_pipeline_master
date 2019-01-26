@@ -507,6 +507,7 @@ data <- read.delim(sample_sheet_path, header = TRUE, sep = ",")
 
 
 }
+sessioninfo()
 }
 ```
 # QA
