@@ -1,0 +1,249 @@
+configfile: "config.yaml"
+
+import os, sys, re, glob, shutil
+import subprocess
+import gzip
+import pandas as pd
+from datetime import datetime
+import multiprocessing as mp
+from itertools import chain
+
+# get all the information from the peak calling sample sheet
+peaks_list = list()
+inputs_list = list()
+broad_list = list()
+peak_allinfo_list = list()
+ss = pd.read_csv(config['peak_samplesheet_path'])
+for index, row in ss.iterrows():
+    peakfq_noend = ".".join(row[0].split(".")[0:-1])
+    input_noend = ".".join(row[1].split(".")[0:-1])
+
+    temp_list = [peakfq_noend, input_noend, row[2], row[3]]
+    peak_allinfo_list.append(temp_list) # this has all ths info as a list of lists, with each element being a list with info from each row
+    # peaks_list.append(peakfq_noend)
+    # inputs_list.append(input_noend)
+    # broad_list.append(row[3])
+
+bam_files_list = expand("results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}.bam", sample = config['samples'], aligner = config['aligner'], mapq = config['bam_mapq'])
+peak_paths = list()
+input_paths = list()
+peak_name = list()
+for peak in peak_allinfo_list:
+    for bam in bam_files_list:
+        if re.search(peak[0], bam):
+            peak_paths.append(bam)
+            if peak[2]:
+                peak_name.append(peak[3] + "_broad") #makes the folder name based on the basename that was input by user (column 1 in the )
+            else:
+                peak_name.append(peak[3])
+        if re.search(peak[1], bam):
+            input_paths.append(bam)
+
+if config['genome'] == "hg19":
+    fasta_name = "BSgenome.Hsapiens.UCSC.hg19.fa"
+if config['genome'] == "hg38":
+    fasta_name = "BSgenome.Hsapiens.UCSC.hg38.fa"
+if config['genome'] == "mm10":
+    fasta_name = "BSgenome.Mmusculus.UCSC.mm10.fa"
+
+rule all:
+    input:
+        expand("results/ShortRead_QA/{sample}_duplication_perc.txt", sample = config['samples']),
+        expand("results/filtered_fastq/{sample}_filtered.fastq", sample = config['samples']),
+        fasta_name,
+        expand("results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}.bam", sample = config['samples'], aligner = config['aligner'], mapq = config['bam_mapq']),
+        expand("results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}_BAMsummary.txt", sample = config['samples'], aligner = config['aligner'], mapq = config['bam_mapq']),
+        expand("results/bigwigs_{aligner}/{sample}_sorted_rmDup_q{mapq}_norm.bw", sample = config['samples'], aligner = config['aligner'], mapq = config['bam_mapq']),
+        # expand("results/bigwigs/{sample}_{dups}Dup.bw", sample = config['samples'], dups = config['duplicates']),
+        # "results/plots/PCA.pdf",
+        # "results/plots/cor.pdf",
+        expand("results/macs_peaks/{peaks}/", peaks = peak_name)
+
+rule ShortRead_QA:
+    input:
+        lambda wildcards: config["samples"][wildcards.sample] # this will return the paths to the input fastq files, the wildcard determined in the 'rule_all' above
+    output:
+        dup_perc = "results/ShortRead_QA/{sample}_duplication_perc.txt"
+    script:
+        "scripts/ShortRead_QA.R"
+
+rule filter_fastq:
+    input:
+        lambda wildcards: config["samples"][wildcards.sample]
+    output:
+        "results/filtered_fastq/{sample}_filtered.fastq"
+    script:
+        "scripts/filter_fastq.R"
+
+rule make_BSgenome_fasta:
+    input:
+    output:
+        fasta_name
+    script:
+        "scripts/makeBSgenome_fasta.R"
+
+def which_fasta():
+    if config['make_BSgenome_fasta']:
+        return(fasta_name)
+    else:
+        return(config['user_fasta'])
+
+rule align_Rsubread:
+    input:
+        fasta = which_fasta(), # if 'download_fasta' is true, then it will use the known output of the 'downloadFasta' rule. Otherwise, it will look for the user-input file from config file
+        fastq = "results/filtered_fastq/{sample}_filtered.fastq"
+    output:
+        BAM = temp("results/mapped_reads_Rsubread/{sample}.bam"),
+        BAMlog = "results/mapped_reads_Rsubread/{sample}_BAMlog.txt"
+    #params:
+    #    rg=r"@RG\tID:{sample}\tSM:{sample}"
+    log:
+        "results/logs/alignment/{sample}.log"
+    #threads: config['align_cores'] # this is the number of threads used for this command, the --cores argument would have to be a multiple of 'align_cores' for this to run multiple alignments in parallel
+    script:
+        "scripts/align_Rsubread.R"
+
+rule align_bowtie2:
+    input:
+        fasta = which_fasta(), # if 'download_fasta' is true, then it will use the known output of the 'downloadFasta' rule. Otherwise, it will look for the user-input file from config file
+        fastq = "results/filtered_fastq/{sample}_filtered.fastq"
+    output:
+        temp("results/mapped_reads_bowtie2/{sample}.bam")
+    #params:
+    #    rg=r"@RG\tID:{sample}\tSM:{sample}"
+    log:
+        "results/logs/alignment/{sample}.log"
+    threads: config['align_cores'] # this is the number of threads used for this command, the --cores argument would have to be a multiple of 'align_cores' for this to run multiple alignments in parallel
+    run:
+        if config["index"] == True:
+            shell("bowtie2-build {input.fasta} {input.fasta}")
+        #"(bwa mem -R '{params.rg}' -t {threads} {input} | "
+        shell("bowtie2 -x {input.fasta} -U {input.fastq} -p {threads}| samtools view -Sb - > {output} 2> {log}")
+
+rule align_bwa:
+    input:
+        fasta = which_fasta(), # if 'download_fasta' is true, then it will use the known output of the 'downloadFasta' rule. Otherwise, it will look for the user-input file from config file
+        fastq = "results/filtered_fastq/{sample}_filtered.fastq"
+    output:
+        temp("results/mapped_reads_bwa/{sample}.bam")
+    #params:
+    #    rg=r"@RG\tID:{sample}\tSM:{sample}"
+    log:
+        "results/logs/alignment/{sample}.log"
+    threads: config['align_cores'] # this is the number of threads used for this command, the --cores argument would have to be a multiple of 'align_cores' for this to run multiple alignments in parallel
+    run:
+        if config["index"] == True:
+            shell("bwa mem {input.fasta}")
+        #"(bwa mem -R '{params.rg}' -t {threads} {input} | "
+        shell("bwa mem -t {threads} {input} | samtools view -Sb - > {output} 2> {log}")
+
+
+rule Rsamtools_sort_index:
+    input:
+        "results/mapped_reads_{aligner}/{sample}.bam"
+    output:
+        BAM_sorted = "results/sorted_mapped_reads_{aligner}/{sample}_sorted.bam"
+    script:
+        "scripts/Rsamtools_sort_index.R"
+
+rule Rsamtools_filterBAM:
+    input:
+        BAM_sorted = "results/sorted_mapped_reads_{aligner}/{sample}_sorted.bam"
+    output:
+        BAM_filtered = "results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}.bam"
+    script:
+        "scripts/Rsamtools_filter.R"
+
+rule BAM_log:
+    input:
+        BAM_sorted = "results/sorted_mapped_reads_{aligner}/{sample}_sorted.bam",
+        BAM_filtered = "results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}.bam"
+    output:
+        BAMsummary = "results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}_BAMsummary.txt"
+    script:
+        "scripts/make_BAMsummary.R"
+
+rule make_bigwig:
+    input:
+        BAM_filtered = "results/sorted_mapped_reads_{aligner}/{sample}_sorted_rmDup_q{mapq}.bam"
+    output:
+        bw_raw = "results/bigwigs_{aligner}/{sample}_sorted_rmDup_q{mapq}.bw",
+        bw_norm = "results/bigwigs_{aligner}/{sample}_sorted_rmDup_q{mapq}_norm.bw"
+    script:
+        "scripts/make_bigwig.R"
+# indexing and bigwigs generation needed to be in same rule since they use same input (i think this is true?)
+# rule index_make_bigwig:
+#     input:
+#         bam="results/mapped_sorted_{dups}Dup_reads/{sample}_{dups}Dup.bam"
+#     output:
+#         index="results/mapped_sorted_{dups}Dup_reads/{sample}_{dups}Dup.bam.bai",
+#         bw="results/bigwigs/{sample}_{dups}Dup.bw"
+#     shell:
+#         "samtools index {input};"
+#         "bamCoverage -b {input.bam} -o {output.bw} --normalizeUsing CPM"
+
+# rule plot_PCA_corr:
+#     input:
+#         #index="results/mapped_sorted_{dups}Dup_reads/{sample}_{dups}Dup.bam.bai",
+#         bws=expand("results/bigwigs/{sample}_{dups}Dup.bw", sample = config['samples'], dups = config['duplicates'])
+#     output:
+#         mat = temp("results/temp.npz"),
+#         pca = "results/plots/PCA.pdf",
+#         cor = "results/plots/cor.pdf"
+#     run:
+#         shell("multiBigwigSummary bins -b {input.bws} -o {output.mat}")
+#         shell("plotPCA --corData {output.mat} --plotFile {output.pca}")
+#         shell("plotCorrelation --corData {output.mat} --corMethod spearman --whatToPlot heatmap --plotFile {output.cor}")
+#         if os.path.isdir("results/mapped_reads"):
+#             os.rmdir("results/mapped_reads")
+#         if os.path.isdir("results/mapped_sorted_reads"):
+#             os.rmdir("results/mapped_sorted_reads")
+
+# skipped the tss plot portion, do you want it?
+
+
+rule macs2_call_peaks:
+    input:
+        peak_paths,
+        input_paths
+    output:
+        directory(expand("results/macs_peaks/{peaks}/", peaks = peak_name))
+    run:
+        if config['genome'] == "hg19" or config['genome'] == "hg38":
+            macs2_genome = "hs"
+        if config['genome'] == "mm9" or config['genome'] == "mm10":
+            macs2_genome = "mm"
+        for i in list(range(0, len(peak_paths))):
+            if re.search("broad", output[i]):
+                macs_command = "macs2 callpeak -t " + peak_paths[i] + " -c " + input_paths[i] + " -g " + macs2_genome + " -n " + peak_name[i] + " --broad --outdir " + output[i] + " {config[extra_peaks_args]}"
+            else:
+                macs_command = "macs2 callpeak -t " + peak_paths[i] + " -c " + input_paths[i] + " -g " + macs2_genome + " -n " + peak_name[i] + " --outdir " + output[i] + " {config[extra_peaks_args]}"
+            shell(macs_command)
+
+
+
+        # ss = pd.read_csv(config['peak_samplesheet_path'])
+        # if config['genome'] == "hg19" or config['genome'] == "hg38":
+        #     '{macs2_genome}' = "hs"
+        # if config['genome'] == "mm9" or config['genome'] == "mm10":
+        #     '{macs2_genome}' = "mm"
+        #
+        # for index, row in ss.iterrows():
+        #     input_noend = ".".join(row[2].split(".")[0:-1])
+        #     peakfq_noend = ".".join(row[1].split(".")[0:-1])
+        #
+        #
+        #     for bam_file in bam_files_list:
+        #         if re.search(input_noend, bam_file): # this will be a probelm when the fastq names are just longer versions of other fastqs. Just need to make sure the names are all unique without any substrings of other fastq names
+        #             input_bam = bam_file
+        #
+        #     for bam_file in bam_files_list:
+        #         if re.search(peakfq_noend, bam_file): # this will be a probelm when the fastq names are just longer versions of other fastqs. Just need to make sure the names are all unique without any substrings of other fastq names
+        #             peak_bam = bam_file
+        #
+        #     if not row[3]:
+        #         macs_command = "macs2 callpeak -t " + peak_bam + " -c " + input_bam + " -g " + macs2_genome + " -n " + row[0] + " --outdir " + output[0] + " " + config['extra_peaks_args']
+        #
+        #     else:
+        #         macs_command = "macs2 callpeak -t " + peak_bam + " -c " + input_bam + " -g " + macs2_genome + " -n " + row[0] + " --outdir " + output[0] + " --broad " + config['extra_peaks_args']
+        #     #print(macs_command)
